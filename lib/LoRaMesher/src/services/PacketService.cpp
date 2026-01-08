@@ -155,6 +155,11 @@ DataPacket* PacketService::createDataPacket(uint16_t dst, uint16_t src, uint8_t 
     packet->type = type;
     packet->packetSize = payloadSize + sizeof(DataPacket);
 
+    //  新增這兩行強制歸零 
+    packet->via = 0;       // 解決 Via 亂碼
+    packet->hop_count = 0; // 解決 Hops 亂碼
+    // 
+
     return packet;
 }
 
