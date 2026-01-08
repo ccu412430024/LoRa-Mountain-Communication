@@ -778,7 +778,13 @@ void LoraMesher::printHeaderPacket(Packet<uint8_t>* p, String title) {
     bool isDataPacket = PacketService::isDataPacket(p->type);
     bool isControlPacket = PacketService::isControlPacket(p->type);
 
-    ESP_LOGI(LM_TAG, "Packet %s -- Size: %d Src: %X Dst: %X Id: %d Type: %d Via: %X Seq_Id: %d Num: %d",
+    // 如果是 DataPacket，就轉型並讀取 hop_count
+    uint8_t hops = 0;
+    if (PacketService::isDataPacket(p->type)) {
+        hops = reinterpret_cast<DataPacket*>(p)->hop_count;
+    }
+
+    ESP_LOGI(LM_TAG, "Packet %s -- Size: %d Src: %X Dst: %X Id: %d Type: %d Via: %X Seq_Id: %d Num: %d Hops: %d",
         title.c_str(),
         p->packetSize,
         p->src,
@@ -787,7 +793,19 @@ void LoraMesher::printHeaderPacket(Packet<uint8_t>* p, String title) {
         p->type,
         isDataPacket ? (reinterpret_cast<DataPacket*>(p))->via : 0,
         isControlPacket ? (reinterpret_cast<ControlPacket*>(p))->seq_id : 0,
-        isControlPacket ? (reinterpret_cast<ControlPacket*>(p))->number : 0);
+        isControlPacket ? (reinterpret_cast<ControlPacket*>(p))->number : 0,
+        hops);
+    DEBUG_PRINTF("Packet %s -- Size: %d Src: %X Dst: %X Id: %d Type: %d Via: %X Seq_Id: %d Num: %d Hops: %d",
+        title.c_str(),
+        p->packetSize,
+        p->src,
+        p->dst,
+        p->id,
+        p->type,
+        isDataPacket ? (reinterpret_cast<DataPacket*>(p))->via : 0,
+        isControlPacket ? (reinterpret_cast<ControlPacket*>(p))->seq_id : 0,
+        isControlPacket ? (reinterpret_cast<ControlPacket*>(p))->number : 0,
+        hops);
 }
 
 void LoraMesher::sendReliablePacket(uint16_t dst, uint8_t* payload, uint32_t payloadSize) {
@@ -924,7 +942,7 @@ void LoraMesher::processDataPacket(QueuePacket<DataPacket>* pq) {
 
         // 4. 如果是新的廣播，且不是我發的 -> 執行轉發
         if (!isFromMe && !isSeen) {
-            ESP_LOGI(LM_TAG, "Relaying BROADCAST from %X", packet->src);
+            ESP_LOGV(LM_TAG, "Relaying BROADCAST from %X", packet->src);
 
             // 記錄到歷史清單
             recentBroadcasts[historyIndex].src = packet->src;
@@ -935,6 +953,17 @@ void LoraMesher::processDataPacket(QueuePacket<DataPacket>* pq) {
             // 注意：這裡我們複製一份完全一樣的封包放入發送隊列
             Packet<uint8_t>* forwardedPacket = PacketService::copyPacket(packet, packet->packetSize);
             
+            // --- [新增] 增加跳數計數 ---
+            // 這裡需要轉型，因為 Packet<uint8_t> 只是基底，看不到 RouteDataPacket 的成員
+            // 注意：要確保這個封包確實是 DataPacket 結構才能這樣轉
+            if (PacketService::isDataPacket(forwardedPacket->type)) {
+                 reinterpret_cast<RouteDataPacket*>(forwardedPacket)->hop_count++;
+                 ESP_LOGV(LM_TAG, "Broadcast Hop Count: %d", reinterpret_cast<RouteDataPacket*>(forwardedPacket)->hop_count);
+                 // 【建議加入這行】標示這是廣播轉發 (Bcast-Relay)
+                printHeaderPacket(forwardedPacket, "bcast-relay");
+            }
+            // ------------------------
+
             // 建立發送隊列項目 (優先級設低一點，避免阻塞重要控制訊號)
             QueuePacket<Packet<uint8_t>>* tx_pq = PacketQueueService::createQueuePacket(forwardedPacket, DEFAULT_PRIORITY, 0);
             
@@ -944,7 +973,7 @@ void LoraMesher::processDataPacket(QueuePacket<DataPacket>* pq) {
             if (isSeen) ESP_LOGV(LM_TAG, "Broadcast duplicate dropped.");
         }
         // --- [新增結束] ---
-        
+
         incReceivedBroadcast();
         processDataPacketForMe(pq);
         return;
@@ -952,6 +981,15 @@ void LoraMesher::processDataPacket(QueuePacket<DataPacket>* pq) {
     }
     else if (packet->via == getLocalAddress()) {
         ESP_LOGV(LM_TAG, "Data Packet from %X for %X. Via is me. Forwarding it", packet->src, packet->dst);
+        
+        // --- [新增] 增加跳數計數 ---
+        // 因為 packet 是 DataPacket*，它繼承自 RouteDataPacket，所以可以直接存取
+        packet->hop_count++; 
+        ESP_LOGV(LM_TAG, "Hop Count: %d", packet->hop_count);
+        // 這裡加一行，專門記錄「轉發」這個動作，才不會跟普通的「收到」搞混
+        printHeaderPacket(reinterpret_cast<Packet<uint8_t>*>(packet), "forwarding");
+        // ------------------------
+
         incReceivedIAmVia();
         addToSendOrderedAndNotify(reinterpret_cast<QueuePacket<Packet<uint8_t>>*>(pq));
         return;
