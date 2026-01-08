@@ -782,9 +782,20 @@ void LoraMesher::printHeaderPacket(Packet<uint8_t>* p, String title) {
     uint8_t hops = 0;
     if (PacketService::isDataPacket(p->type)) {
         hops = reinterpret_cast<DataPacket*>(p)->hop_count;
+        DEBUG_PRINTF("Packet %s -- Size: %d Src: %X Dst: %X Id: %d Type: %d Via: %X Seq_Id: %d Num: %d Hops: %d",
+        title.c_str(),
+        p->packetSize,
+        p->src,
+        p->dst,
+        p->id,
+        p->type,
+        isDataPacket ? (reinterpret_cast<DataPacket*>(p))->via : 0,
+        isControlPacket ? (reinterpret_cast<ControlPacket*>(p))->seq_id : 0,
+        isControlPacket ? (reinterpret_cast<ControlPacket*>(p))->number : 0,
+        hops);
     }
 
-    ESP_LOGI(LM_TAG, "Packet %s -- Size: %d Src: %X Dst: %X Id: %d Type: %d Via: %X Seq_Id: %d Num: %d Hops: %d",
+    ESP_LOGI(LM_TAG, "Packet %s -- Size: %d Src: %X Dst: %X Id: %d Type: %d Via: %X Seq_Id: %d Num: %d",
         title.c_str(),
         p->packetSize,
         p->src,
@@ -793,19 +804,8 @@ void LoraMesher::printHeaderPacket(Packet<uint8_t>* p, String title) {
         p->type,
         isDataPacket ? (reinterpret_cast<DataPacket*>(p))->via : 0,
         isControlPacket ? (reinterpret_cast<ControlPacket*>(p))->seq_id : 0,
-        isControlPacket ? (reinterpret_cast<ControlPacket*>(p))->number : 0,
-        hops);
-    DEBUG_PRINTF("Packet %s -- Size: %d Src: %X Dst: %X Id: %d Type: %d Via: %X Seq_Id: %d Num: %d Hops: %d",
-        title.c_str(),
-        p->packetSize,
-        p->src,
-        p->dst,
-        p->id,
-        p->type,
-        isDataPacket ? (reinterpret_cast<DataPacket*>(p))->via : 0,
-        isControlPacket ? (reinterpret_cast<ControlPacket*>(p))->seq_id : 0,
-        isControlPacket ? (reinterpret_cast<ControlPacket*>(p))->number : 0,
-        hops);
+        isControlPacket ? (reinterpret_cast<ControlPacket*>(p))->number : 0
+    );
 }
 
 void LoraMesher::sendReliablePacket(uint16_t dst, uint8_t* payload, uint32_t payloadSize) {

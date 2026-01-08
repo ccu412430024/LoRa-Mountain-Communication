@@ -8,7 +8,12 @@ Packet<uint8_t>* PacketService::createEmptyPacket(size_t packetSize) {
     }
 
     Packet<uint8_t>* p = static_cast<Packet<uint8_t>*>(pvPortMalloc(packetSize));
-
+    //  新增這段 (開始) 
+    if (p != nullptr) {
+        // 將記憶體全部歸零，解決 hop_count 亂跳的問題
+        memset(p, 0, packetSize); 
+    }
+    //  新增這段 (結束) 
     ESP_LOGI(LM_TAG, "Packet created with %d bytes", packetSize);
 
     return p;
