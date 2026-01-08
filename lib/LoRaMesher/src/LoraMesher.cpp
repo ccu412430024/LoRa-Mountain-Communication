@@ -901,6 +901,50 @@ void LoraMesher::processDataPacket(QueuePacket<DataPacket>* pq) {
     }
     else if (packet->dst == BROADCAST_ADDR) {
         ESP_LOGV(LM_TAG, "Data packet from %X BROADCAST", packet->src);
+
+        // --- [新增] 防止風暴邏輯 ---
+        
+        // 1. 定義一個靜態陣列來記錄最近收到的廣播 (簡單的快取機制)
+        // 只有這兩行變數會一直存在記憶體中
+        static const int HISTORY_SIZE = 20; 
+        static struct { uint16_t src; uint8_t id; } recentBroadcasts[HISTORY_SIZE];
+        static int historyIndex = 0;
+
+        // 2. 檢查是否是自己發出的 (避免回音)
+        bool isFromMe = (packet->src == getLocalAddress());
+
+        // 3. 檢查是否已經處理過這個封包 (避免無線迴圈)
+        bool isSeen = false;
+        for (int i = 0; i < HISTORY_SIZE; i++) {
+            if (recentBroadcasts[i].src == packet->src && recentBroadcasts[i].id == packet->id) {
+                isSeen = true;
+                break;
+            }
+        }
+
+        // 4. 如果是新的廣播，且不是我發的 -> 執行轉發
+        if (!isFromMe && !isSeen) {
+            ESP_LOGI(LM_TAG, "Relaying BROADCAST from %X", packet->src);
+
+            // 記錄到歷史清單
+            recentBroadcasts[historyIndex].src = packet->src;
+            recentBroadcasts[historyIndex].id = packet->id;
+            historyIndex = (historyIndex + 1) % HISTORY_SIZE; // 循環覆寫
+
+            // 複製封包 (因為原始 packet 會在 processDataPacketForMe 被刪除)
+            // 注意：這裡我們複製一份完全一樣的封包放入發送隊列
+            Packet<uint8_t>* forwardedPacket = PacketService::copyPacket(packet, packet->packetSize);
+            
+            // 建立發送隊列項目 (優先級設低一點，避免阻塞重要控制訊號)
+            QueuePacket<Packet<uint8_t>>* tx_pq = PacketQueueService::createQueuePacket(forwardedPacket, DEFAULT_PRIORITY, 0);
+            
+            // 加入發送排程
+            addToSendOrderedAndNotify(tx_pq);
+        } else {
+            if (isSeen) ESP_LOGV(LM_TAG, "Broadcast duplicate dropped.");
+        }
+        // --- [新增結束] ---
+        
         incReceivedBroadcast();
         processDataPacketForMe(pq);
         return;
